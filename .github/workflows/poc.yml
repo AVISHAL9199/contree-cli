@@ -1,74 +1,70 @@
 
-name: ZIP Artifact Extraction PoC
+name: Artifact Extraction Security Test
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
-  prepare:
+  security-test:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Create harmless test artifact
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create baseline artifact
         shell: bash
         run: |
           set -euo pipefail
 
           mkdir -p artifact
-          echo "ZIP_SLIP_PROOF_2026" > artifact/proof.txt
+          printf 'SAFE_MARKER_2026\n' > artifact/proof.txt
+          zip -r proof.zip artifact
 
-          zip -r test-artifact.zip artifact/
-
-          echo "Artifact created:"
-          unzip -l test-artifact.zip
-
-      - name: Upload test artifact
+      - name: Upload baseline artifact
         uses: actions/upload-artifact@v4
         with:
-          name: extraction-test
-          path: test-artifact.zip
+          name: security-test
+          path: proof.zip
           retention-days: 1
 
-  verify:
-    needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - name: Prepare extraction directory
+      - name: Prepare isolated extraction directory
+        shell: bash
         run: |
-          mkdir -p extracted
-          echo "Extraction directory ready"
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/security-test/extracted"
+          echo "Extraction directory prepared"
 
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: extraction-test
-          path: downloaded
+          name: security-test
+          path: ${{ runner.temp }}/security-test/downloaded
 
-      - name: Inspect downloaded artifact
+      - name: Verify archive integrity
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Downloaded files:"
-          find downloaded -type f -print
+          ARCHIVE="$RUNNER_TEMP/security-test/downloaded/proof.zip"
+          DEST="$RUNNER_TEMP/security-test/extracted"
 
-          echo "Checking ZIP archive..."
-          unzip -l downloaded/test-artifact.zip
+          test -f "$ARCHIVE"
+          unzip -t "$ARCHIVE"
 
-      - name: Extract and verify harmless marker
-        shell: bash
-        run: |
-          set -euo pipefail
+          unzip "$ARCHIVE" -d "$DEST"
 
-          unzip downloaded/test-artifact.zip -d extracted
+          echo "Extracted files:"
+          find "$DEST" -type f -print
 
-          MARKER="extracted/artifact/proof.txt"
+          MARKER="$DEST/artifact/proof.txt"
 
-          if [ -f "$MARKER" ]; then
-            echo "[PASS] Marker file exists"
-            cat "$MARKER"
-          else
-            echo "[FAIL] Marker file missing"
-            exit 1
-          fi
+          test -f "$MARKER"
+          grep -Fx 'SAFE_MARKER_2026' "$MARKER"
 
-          echo "[PASS] Normal artifact extraction verified"
+          echo "[PASS] Baseline extraction verified"
